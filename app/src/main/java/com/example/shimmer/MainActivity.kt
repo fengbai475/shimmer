@@ -12,7 +12,6 @@ import android.os.Environment
 import android.os.FileObserver
 import android.provider.Settings
 import android.provider.MediaStore
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -94,6 +93,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import coil.compose.AsyncImage
 import com.example.shimmer.ui.theme.ShimmerTheme
+import kotlinx.coroutines.delay
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -186,16 +186,26 @@ fun CameraScreen() {
         }
     }
 
+    // 应用内提示条：显示在底部控制区上方，不依赖系统 Toast
+    var toastMessage by remember { mutableStateOf<String?>(null) }
+    var toastKey by remember { mutableStateOf(0) }
+    val showMessage: (String) -> Unit = { message ->
+        toastMessage = message
+        toastKey += 1
+    }
+    LaunchedEffect(toastKey) {
+        if (toastMessage != null) {
+            delay(2000)
+            toastMessage = null
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasCameraPermission = granted
         if (!granted && isCameraMode) {
-            Toast.makeText(
-                context,
-                context.getString(R.string.permission_needed),
-                Toast.LENGTH_LONG
-            ).show()
+            showMessage(context.getString(R.string.permission_needed))
         }
     }
 
@@ -209,21 +219,14 @@ fun CameraScreen() {
         val file = pendingSaveFile
         pendingSaveFile = null
         if (granted && file != null) {
-            Toast.makeText(
-                context,
-                if (saveToGallery(context, file)) {
-                    R.string.saved_to_gallery
-                } else {
-                    R.string.save_failed
-                },
-                Toast.LENGTH_SHORT
-            ).show()
+            showMessage(
+                context.getString(
+                    if (saveToGallery(context, file)) R.string.saved_to_gallery
+                    else R.string.save_failed
+                )
+            )
         } else {
-            Toast.makeText(
-                context,
-                R.string.storage_permission_needed,
-                Toast.LENGTH_SHORT
-            ).show()
+            showMessage(context.getString(R.string.storage_permission_needed))
         }
     }
 
@@ -267,11 +270,7 @@ fun CameraScreen() {
                 )
                 imageCapture = capture
             } catch (e: Exception) {
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.camera_start_failed, e.message),
-                    Toast.LENGTH_LONG
-                ).show()
+                showMessage(context.getString(R.string.camera_start_failed, e.message))
             }
         }, mainExecutor)
     }
@@ -384,17 +383,21 @@ fun CameraScreen() {
                     } else {
                         val capture = imageCapture
                         if (capture == null) {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.camera_not_ready),
-                                Toast.LENGTH_SHORT
-                            ).show()
+                            showMessage(context.getString(R.string.camera_not_ready))
                             return@ShutterButton
                         }
-                        capturePhoto(context, photosDir, capture, validityDays, mainExecutor) {
-                            refreshKey += 1
-                            photoFiles = loadPhotos(photosDir)
-                        }
+                        capturePhoto(
+                            context,
+                            photosDir,
+                            capture,
+                            validityDays,
+                            mainExecutor,
+                            onSaved = {
+                                refreshKey += 1
+                                photoFiles = loadPhotos(photosDir)
+                            },
+                            onMessage = showMessage
+                        )
                     }
                 },
                 modifier = Modifier.align(Alignment.Center),
@@ -497,15 +500,12 @@ fun CameraScreen() {
                         pendingSaveFile = file
                         galleryWriteLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     } else {
-                        Toast.makeText(
-                            context,
-                            if (saveToGallery(context, file)) {
-                                R.string.saved_to_gallery
-                            } else {
-                                R.string.save_failed
-                            },
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        showMessage(
+                            context.getString(
+                                if (saveToGallery(context, file)) R.string.saved_to_gallery
+                                else R.string.save_failed
+                            )
+                        )
                     }
                 },
                 onDelete = { file ->
@@ -519,12 +519,29 @@ fun CameraScreen() {
                             viewerPhoto = null
                         }
                     }
-                    Toast.makeText(
-                        context,
-                        if (ok) R.string.deleted else R.string.delete_failed,
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    showMessage(
+                        context.getString(if (ok) R.string.deleted else R.string.delete_failed)
+                    )
                 }
+            )
+        }
+    }
+
+    // 应用内提示条：位于底部控制区上方
+    toastMessage?.let { message ->
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 150.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color(0xCC333333))
+                .padding(horizontal = 20.dp, vertical = 10.dp)
+        ) {
+            Text(
+                text = message,
+                color = Color.White,
+                fontSize = 14.sp,
+                textAlign = TextAlign.Center
             )
         }
     }
@@ -550,17 +567,11 @@ fun CameraScreen() {
             onAccessibilityToggle = { enable ->
                 if (enable) {
                     when {
-                        Build.VERSION.SDK_INT < 30 -> Toast.makeText(
-                            context,
-                            R.string.accessibility_sdk_too_old,
-                            Toast.LENGTH_LONG
-                        ).show()
+                        Build.VERSION.SDK_INT < 30 -> showMessage(
+                            context.getString(R.string.accessibility_sdk_too_old)
+                        )
                         !ScreenshotAccessibilityService.isEnabled(context) -> {
-                            Toast.makeText(
-                                context,
-                                R.string.accessibility_not_enabled,
-                                Toast.LENGTH_LONG
-                            ).show()
+                            showMessage(context.getString(R.string.accessibility_not_enabled))
                             context.startActivity(
                                 Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -609,7 +620,8 @@ private fun capturePhoto(
     imageCapture: ImageCapture,
     validityDays: Int,
     mainExecutor: Executor,
-    onSaved: () -> Unit
+    onSaved: () -> Unit,
+    onMessage: (String) -> Unit
 ) {
     if (!dir.exists()) {
         dir.mkdirs()
@@ -627,19 +639,11 @@ private fun capturePhoto(
         object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                 onSaved()
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.photo_saved),
-                    Toast.LENGTH_SHORT
-                ).show()
+                onMessage(context.getString(R.string.photo_saved))
             }
 
             override fun onError(exception: ImageCaptureException) {
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.capture_failed, exception.message),
-                    Toast.LENGTH_SHORT
-                ).show()
+                onMessage(context.getString(R.string.capture_failed, exception.message))
             }
         }
     )
